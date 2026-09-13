@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 import type { ChordShape } from '@/types/chord';
 import { colors, fonts } from '@/constants/theme';
 
@@ -33,6 +33,18 @@ export function ChordDiagram({ shape }: ChordDiagramProps) {
       <Text style={styles.name}>{name}</Text>
 
       <Svg width={SVG_W} height={SVG_H}>
+        {baseFret > 1 && (
+          <SvgText
+            x={PAD_X - 3}
+            y={PAD_TOP + FRET_GAP * 0.5 + 3}
+            fontSize={7}
+            fill={colors.textMuted}
+            textAnchor="end"
+          >
+            {baseFret}
+          </SvgText>
+        )}
+
         {Array.from({ length: FRET_COUNT + 1 }, (_, i) => {
           const isNut = i === 0 && showNut;
           return (

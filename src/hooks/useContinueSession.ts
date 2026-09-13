@@ -1,15 +1,12 @@
+import { SONGS } from "@/data/songs";
 import type { ContinueSession } from "@/types/song";
+
+const riverstone = SONGS.find((song) => song.id === "riverstone")!;
 
 export const MOCK_SESSION: ContinueSession = {
   progress: 0.64,
   song: {
-    id: "riverstone",
-    title: "Riverstone",
-    artist: "Hana Moss",
-    key: "G",
-    capo: null,
-    tempo: 92,
-    durationSeconds: 228,
+    ...riverstone,
     artworkUrl:
       "https://images.unsplash.com/photo-1439066615861-d1af74d74000?w=800",
   },

@@ -24,7 +24,7 @@ export function ContinueCard({ session, onPressPlay }: ContinueCardProps) {
   const percent = Math.round(clamped * 100);
 
   return (
-    <HeroFrame source={song.artworkUrl}>
+    <HeroFrame source={song.artworkUrl ? { uri: song.artworkUrl } : undefined}>
       <Text style={styles.eyebrow}>PICK UP WHERE YOU LEFT OFF</Text>
       <Text style={styles.title} numberOfLines={2}>{song.title}</Text>
       <Text style={styles.artist} numberOfLines={1}>{song.artist}</Text>
