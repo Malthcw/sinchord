@@ -1,23 +1,25 @@
 import { useMemo, useState } from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/Screen';
 import { SongSearchBar } from '@/components/SongSearchBar';
 import { GenreFilterRow } from '@/components/GenreFilterRow';
 import { SongListItem } from '@/components/SongListItem';
-import { GENRE_FILTERS, SONGS } from '@/data/songs';
+import { SongsLoadState } from '@/components/SongsLoadState';
+import { useSongs } from '@/context/songs';
 import { colors, fonts, spacing } from '@/constants/theme';
 import type { Song } from '@/types/song';
 
 export default function SongsScreen() {
   const router = useRouter();
+  const { songs: allSongs, genres, status, errorMessage, refresh } = useSongs();
   const [query, setQuery] = useState('');
-  const [genre, setGenre] = useState<string>(GENRE_FILTERS[0]);
+  const [genre, setGenre] = useState('All');
 
   const songs = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
-    return SONGS.filter((song) => {
+    return allSongs.filter((song) => {
       const matchesGenre = genre === 'All' || song.genres.includes(genre);
       if (!matchesGenre) return false;
 
@@ -25,7 +27,7 @@ export default function SongsScreen() {
       const haystack = [song.title, song.artist, ...song.chords].join(' ').toLowerCase();
       return haystack.includes(normalizedQuery);
     });
-  }, [query, genre]);
+  }, [allSongs, query, genre]);
 
   return (
     <Screen>
@@ -37,6 +39,22 @@ export default function SongsScreen() {
         )}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={status === 'loading' && allSongs.length > 0}
+            onRefresh={() => void refresh()}
+            tintColor={colors.accent}
+          />
+        }
+        ListEmptyComponent={
+          status === 'ready' ? null : (
+            <SongsLoadState
+              status={status}
+              errorMessage={errorMessage}
+              onRetry={() => void refresh()}
+            />
+          )
+        }
         ListHeaderComponent={
           <View>
             <Text style={styles.title}>Songs</Text>
@@ -49,10 +67,10 @@ export default function SongsScreen() {
             />
 
             <View style={styles.filterRow}>
-              <GenreFilterRow genres={GENRE_FILTERS} selected={genre} onSelect={setGenre} />
+              <GenreFilterRow genres={genres} selected={genre} onSelect={setGenre} />
             </View>
 
-            <Text style={styles.count}>{songs.length} SONGS</Text>
+            {status === 'ready' && <Text style={styles.count}>{songs.length} SONGS</Text>}
           </View>
         }
       />

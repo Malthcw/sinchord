@@ -3,12 +3,14 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 export type User = {
   id: string;
   name: string;
+  email: string;
 };
 
 type AuthContextValue = {
   user: User | null;
   signIn: (user: User) => void;
   signOut: () => void;
+  updateProfile: (updates: { name: string; email: string }) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -21,6 +23,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       signIn: (nextUser: User) => setUser(nextUser),
       signOut: () => setUser(null),
+      updateProfile: (updates: { name: string; email: string }) =>
+        setUser((prev) => ({ id: prev?.id ?? 'local-user', ...updates })),
     }),
     [user]
   );

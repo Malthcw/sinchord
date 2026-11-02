@@ -8,9 +8,11 @@ import { SongStatsRow } from '@/components/SongStatsRow';
 import { ChordsSection } from '@/components/ChordsSection';
 import { StrummingCard } from '@/components/StrummingCard';
 import { LyricsSection } from '@/components/LyricsSection';
-import { SONGS } from '@/data/songs';
+import { SongsLoadState } from '@/components/SongsLoadState';
 import { colors, fonts, spacing } from '@/constants/theme';
 import { transposeChordName } from '@/utils/chordTranspose';
+import { useSavedSongs } from '@/context/savedSongs';
+import { useSongs } from '@/context/songs';
 
 const MIN_TRANSPOSE = -6;
 const MAX_TRANSPOSE = 6;
@@ -18,22 +20,29 @@ const MAX_TRANSPOSE = 6;
 export default function SongDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const [isSaved, setIsSaved] = useState(false);
+  const { isSaved, toggleSaved } = useSavedSongs();
+  const { getSongById, status, errorMessage, refresh } = useSongs();
   const [transposeSteps, setTransposeSteps] = useState(0);
 
-  const song = SONGS.find((candidate) => candidate.id === id);
+  const song = getSongById(id);
 
   if (!song) {
+    const notReady = status !== 'ready';
+
     return (
       <Screen style={styles.notFound}>
         <SongDetailHeader
-          title="Song not found"
+          title={notReady ? 'Loading song' : 'Song not found'}
           subtitle=""
           isSaved={false}
           onBack={() => router.back()}
           onToggleSave={() => {}}
         />
-        <Text style={styles.notFoundText}>This song doesn't exist anymore.</Text>
+        {notReady ? (
+          <SongsLoadState status={status} errorMessage={errorMessage} onRetry={() => void refresh()} />
+        ) : (
+          <Text style={styles.notFoundText}>This song doesn't exist anymore.</Text>
+        )}
       </Screen>
     );
   }
@@ -43,9 +52,9 @@ export default function SongDetailScreen() {
       <SongDetailHeader
         title={song.title}
         subtitle={`${song.artist} · ${transposeChordName(song.key, transposeSteps)}`}
-        isSaved={isSaved}
+        isSaved={isSaved(song.id)}
         onBack={() => router.back()}
-        onToggleSave={() => setIsSaved((value) => !value)}
+        onToggleSave={() => toggleSaved(song.id)}
       />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -63,7 +72,7 @@ export default function SongDetailScreen() {
           tempo={song.tempo}
           note={song.strummingNote}
         />
-        {song.lyrics && (
+        {Array.isArray(song.lyrics) && song.lyrics.length > 0 && (
           <LyricsSection songTitle={song.title} sections={song.lyrics} steps={transposeSteps} />
         )}
       </ScrollView>
