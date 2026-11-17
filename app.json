@@ -34,7 +34,11 @@
         }
       ],
       "expo-image",
-      "expo-audio"
+      "expo-audio",
+      "expo-font",
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

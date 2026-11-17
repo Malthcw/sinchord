@@ -3,6 +3,15 @@ import { StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@/constants/theme';
 
+type IconName = React.ComponentProps<typeof Ionicons>['name'];
+
+// The tab tint colors are theme strings; RN 0.88 types them as the wider ColorValue.
+const tabIcon =
+  (name: IconName) =>
+  ({ color, size }: { color: unknown; size: number }) => (
+    <Ionicons name={name} size={size} color={color as string} />
+  );
+
 export default function TabsLayout() {
   return (
     <Tabs
@@ -27,28 +36,28 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, size }) => <Ionicons name="home-outline" size={size} color={color} />,
+          tabBarIcon: tabIcon('home-outline'),
         }}
       />
       <Tabs.Screen
         name="songs"
         options={{
           title: 'Songs',
-          tabBarIcon: ({ color, size }) => <Ionicons name="musical-notes-outline" size={size} color={color} />,
+          tabBarIcon: tabIcon('musical-notes-outline'),
         }}
       />
       <Tabs.Screen
         name="saved"
         options={{
           title: 'Saved',
-          tabBarIcon: ({ color, size }) => <Ionicons name="bookmark-outline" size={size} color={color} />,
+          tabBarIcon: tabIcon('bookmark-outline'),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={size} color={color} />,
+          tabBarIcon: tabIcon('person-outline'),
         }}
       />
     </Tabs>

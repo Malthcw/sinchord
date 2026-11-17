@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import { colors, fonts, spacing } from '@/constants/theme';
-import { getAudioContext, playBeatSound, playClick, playStrum } from '@/utils/audio';
+import { getAudioContext, playClick, playStrum } from '@/utils/audio';
+import { buildStrumTrack, type StrumTrack } from '@/utils/strum-track';
+
+const IS_WEB = Platform.OS === 'web';
+/** Native: wait this long after the last tempo tap before re-rendering the track. */
+const TEMPO_DEBOUNCE_MS = 300;
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -51,27 +57,112 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
   const schedulerIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const frameIdRef = useRef<number | null>(null);
 
-  // Native fallback: no audio-clock scheduling API available, so this uses a
-  // self-correcting setTimeout chain instead (still avoids compounding drift).
-  const fallbackIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Native: there is no audio clock to schedule single strokes against, so the
+  // whole rhythm is rendered into one clip. The native player keeps time and
+  // the highlight simply follows the player's position.
+  const playerRef = useRef<AudioPlayer | null>(null);
+  const trackRef = useRef<StrumTrack | null>(null);
+  const trackBpmRef = useRef(0);
+  const sessionRef = useRef(0);
+  const tempoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const beatsPerBar = parseInt(timeSignature, 10) || 4;
+
+  const releasePlayer = useCallback(() => {
+    const player = playerRef.current;
+    playerRef.current = null;
+    trackRef.current = null;
+    if (!player) return;
+    try {
+      player.pause();
+      player.remove();
+    } catch {
+      // Already released.
+    }
+  }, []);
 
   const stop = useCallback(() => {
+    sessionRef.current += 1; // cancels any track still being rendered
     if (schedulerIdRef.current !== null) clearInterval(schedulerIdRef.current);
     if (frameIdRef.current !== null) cancelAnimationFrame(frameIdRef.current);
-    if (fallbackIdRef.current !== null) clearTimeout(fallbackIdRef.current);
+    if (tempoTimerRef.current !== null) clearTimeout(tempoTimerRef.current);
     schedulerIdRef.current = null;
     frameIdRef.current = null;
-    fallbackIdRef.current = null;
+    tempoTimerRef.current = null;
     queueRef.current = [];
+    releasePlayer();
     setIsPlaying(false);
     setActiveIndex(null);
     setCountIn(null);
-  }, []);
+  }, [releasePlayer]);
+
+  /** Native: render the track at the current tempo and start playing it. */
+  const playTrack = useCallback(
+    async (withCountIn: boolean) => {
+      const session = (sessionRef.current += 1);
+      const bpmNow = bpmRef.current;
+      trackBpmRef.current = bpmNow;
+
+      let track: StrumTrack;
+      try {
+        track = await buildStrumTrack({ pattern, bpm: bpmNow, beatsPerBar, countIn: withCountIn });
+      } catch {
+        if (session === sessionRef.current) stop();
+        return;
+      }
+      if (session !== sessionRef.current) return; // stopped or superseded meanwhile
+
+      releasePlayer();
+      const player = createAudioPlayer({ uri: track.uri }, { updateInterval: 100 });
+      player.muted = isMutedRef.current;
+      player.addListener('playbackStatusUpdate', (status) => {
+        // The clip holds a fixed number of bars; at its end, jump back to the
+        // first pattern bar so it keeps going.
+        if (status.didJustFinish && playerRef.current === player) {
+          void player
+            .seekTo(track.countInSeconds)
+            .then(() => player.play())
+            .catch(() => {});
+        }
+      });
+      playerRef.current = player;
+      trackRef.current = track;
+      player.play();
+    },
+    [pattern, beatsPerBar, releasePlayer, stop],
+  );
 
   const start = useCallback(() => {
-    const beatsPerBar = parseInt(timeSignature, 10) || 4;
     setIsPlaying(true);
     setCountIn(beatsPerBar);
+
+    if (!IS_WEB) {
+      void playTrack(true);
+
+      const follow = () => {
+        const player = playerRef.current;
+        const track = trackRef.current;
+        if (player && track) {
+          let seconds = 0;
+          try {
+            seconds = player.currentTime;
+          } catch {
+            // Player was released between frames.
+          }
+          if (seconds < track.countInSeconds) {
+            setCountIn(beatsPerBar - Math.floor(seconds / track.beatSeconds + 1e-6));
+            setActiveIndex(null);
+          } else {
+            const step = Math.floor((seconds - track.countInSeconds) / track.stepSeconds + 1e-6);
+            setCountIn(null);
+            setActiveIndex(step % pattern.length);
+          }
+        }
+        frameIdRef.current = requestAnimationFrame(follow);
+      };
+      frameIdRef.current = requestAnimationFrame(follow);
+      return;
+    }
 
     const audio = getAudioContext();
 
@@ -117,53 +208,33 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
       return;
     }
 
-    // Self-correcting scheduler: each step's delay is computed against a fixed
-    // absolute clock (Date.now()), not "N ms after the last tick fired" like
-    // setInterval — so a single late tick (e.g. a slow native seekTo/play
-    // round-trip) doesn't compound into every tick after it.
-    function scheduleAt(targetTime: number, run: () => void) {
-      const delay = Math.max(0, targetTime - Date.now());
-      fallbackIdRef.current = setTimeout(run, delay);
-    }
+    // Web without Web Audio support: nothing can play.
+    stop();
+  }, [pattern, beatsPerBar, playTrack, stop]);
 
-    function playBeat(index: number) {
-      if (isMutedRef.current) return;
-      const symbol = pattern[index];
-      if (symbol === 'D') playBeatSound('strum-down', { accent: index === 0 });
-      else if (symbol === 'U') playBeatSound('strum-up');
-      // '-' is a rest: no sound.
-    }
+  // Native: mute applies to the playing clip straight away.
+  useEffect(() => {
+    if (playerRef.current) playerRef.current.muted = isMuted;
+  }, [isMuted]);
 
-    function runPatternStep(index: number, targetTime: number) {
-      playBeat(index);
-      setActiveIndex(index);
-      const next = (index + 1) % pattern.length;
-      const eighthNoteMs = 60000 / bpmRef.current / 2;
-      scheduleAt(targetTime + eighthNoteMs, () => runPatternStep(next, targetTime + eighthNoteMs));
-    }
-
-    function runCountInStep(remaining: number, targetTime: number) {
-      if (!isMutedRef.current) playBeatSound('click', { accent: remaining === beatsPerBar });
-      setCountIn(remaining);
-      const quarterNoteMs = 60000 / bpmRef.current;
-
-      if (remaining <= 1) {
-        scheduleAt(targetTime + quarterNoteMs, () => {
-          setCountIn(null);
-          runPatternStep(0, targetTime + quarterNoteMs);
-        });
-        return;
-      }
-
-      scheduleAt(targetTime + quarterNoteMs, () => runCountInStep(remaining - 1, targetTime + quarterNoteMs));
-    }
-
-    runCountInStep(beatsPerBar, Date.now());
-  }, [pattern, timeSignature]);
+  // Native: a tempo change needs a new clip. Re-render once the taps settle
+  // and carry on from the top of the pattern, without another count-in.
+  useEffect(() => {
+    if (IS_WEB || !isPlaying || trackBpmRef.current === 0 || trackBpmRef.current === bpm) return;
+    tempoTimerRef.current = setTimeout(() => {
+      tempoTimerRef.current = null;
+      void playTrack(false);
+    }, TEMPO_DEBOUNCE_MS);
+    return () => {
+      if (tempoTimerRef.current !== null) clearTimeout(tempoTimerRef.current);
+      tempoTimerRef.current = null;
+    };
+  }, [bpm, isPlaying, playTrack]);
 
   useEffect(() => stop, [stop]);
 
-  const patternLabel = pattern.map((symbol) => (symbol === '-' ? '—' : symbol)).join(' ');
+  // Rests show as a gap here; the dash appears only in the arrow row below.
+  const patternLabel = pattern.map((symbol) => (symbol === '-' ? ' ' : symbol)).join('').trimEnd();
 
   return (
     <View style={styles.container}>
@@ -322,14 +393,18 @@ const styles = StyleSheet.create({
   beatRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    gap: 4,
   },
   beat: {
+    flex: 1,
     alignItems: 'center',
     gap: 6,
   },
+  // Shrinks with the card so all eight steps fit on a narrow phone.
   beatButton: {
-    width: 36,
-    height: 36,
+    width: '100%',
+    maxWidth: 36,
+    aspectRatio: 1,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',

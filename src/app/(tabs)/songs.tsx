@@ -47,7 +47,7 @@ export default function SongsScreen() {
           />
         }
         ListEmptyComponent={
-          status === 'ready' ? null : (
+          status === 'ready' ? undefined : (
             <SongsLoadState
               status={status}
               errorMessage={errorMessage}
