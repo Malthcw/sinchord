@@ -28,8 +28,16 @@ export type Song  = {
   /** Chord shapes used in the song, in the order they're introduced */
   chords: string[];
   genres: string[];
-  /** 8 eighth-note strums for one bar of 4/4 time */
+  /**
+   * Evenly spaced strokes that loop as-is, any length. Use '-' for a missed
+   * stroke, e.g. "D UU" on sixteenths is D - U U.
+   */
   strumPattern: ('D' | 'U' | '-')[];
+  /**
+   * Steps per beat: 2 = eighths, 3 = triplets, 4 = sixteenths. When missing,
+   * it's guessed from the pattern length (8 in 4/4 = eighths, 16 = sixteenths).
+   */
+  strumSubdivision?: number;
   timeSignature: string;
   /** Short tip shown under the strumming pattern */
   strummingNote?: string;

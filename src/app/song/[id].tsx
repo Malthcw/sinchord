@@ -70,6 +70,7 @@ export default function SongDetailScreen() {
           pattern={song.strumPattern}
           timeSignature={song.timeSignature}
           tempo={song.tempo}
+          subdivision={song.strumSubdivision}
           note={song.strummingNote}
         />
         {Array.isArray(song.lyrics) && song.lyrics.length > 0 && (
