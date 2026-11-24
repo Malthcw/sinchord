@@ -14,7 +14,7 @@ export type StrumTrackTiming = {
   countInSeconds: number;
   /** Length of one count-in beat (a quarter note). */
   beatSeconds: number;
-  /** Length of one pattern step (an eighth note). */
+  /** Length of one pattern step (an eighth, sixteenth, … depending on the pattern length). */
   stepSeconds: number;
   totalSeconds: number;
 };
@@ -24,6 +24,8 @@ export type StrumTrackOptions = {
   bpm: number;
   beatsPerBar: number;
   countIn: boolean;
+  /** Steps per beat; guessed from the pattern length when missing. */
+  stepsPerBeat?: number;
 };
 
 // Deterministic noise so every render sounds identical.
@@ -110,9 +112,19 @@ function writeAscii(view: DataView, offset: number, text: string) {
   for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
 }
 
-export function getStrumTrackTiming({ pattern, bpm, beatsPerBar, countIn }: StrumTrackOptions): StrumTrackTiming {
+/**
+ * How many pattern steps fit in one beat, derived from the pattern length:
+ * 8 steps in 4/4 → 2 (eighths), 16 → 4 (sixteenths), 12 → 3 (triplets).
+ * Rests ('-') are ordinary steps, so a gap like "D UU" is just "D-UU".
+ */
+export function getStepsPerBeat(patternLength: number, beatsPerBar: number): number {
+  const steps = patternLength / beatsPerBar;
+  return Number.isInteger(steps) && steps > 0 ? steps : 2;
+}
+
+export function getStrumTrackTiming({ pattern, bpm, beatsPerBar, countIn, stepsPerBeat }: StrumTrackOptions): StrumTrackTiming {
   const beatSeconds = 60 / bpm;
-  const stepSeconds = beatSeconds / 2;
+  const stepSeconds = beatSeconds / (stepsPerBeat ?? getStepsPerBeat(pattern.length, beatsPerBar));
   const countInSeconds = countIn ? beatsPerBar * beatSeconds : 0;
   return {
     countInSeconds,

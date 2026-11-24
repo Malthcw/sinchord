@@ -18,6 +18,7 @@ type SongRow = {
   chords: string[];
   genres: string[];
   strum_pattern: ('D' | 'U' | '-')[];
+  strum_subdivision: number | null;
   time_signature: string;
   strumming_note: string | null;
   lyrics: LyricSection[] | null;
@@ -37,6 +38,7 @@ function toSong(row: SongRow): Song {
     chords: row.chords,
     genres: row.genres,
     strumPattern: row.strum_pattern,
+    strumSubdivision: row.strum_subdivision ?? undefined,
     timeSignature: row.time_signature,
     strummingNote: row.strumming_note ?? undefined,
     lyrics: row.lyrics ?? undefined,

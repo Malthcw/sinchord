@@ -5,6 +5,7 @@ import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import { colors, fonts, spacing } from '@/constants/theme';
 import { getAudioContext, playClick, playStrum } from '@/utils/audio';
 import { buildStrumTrack, type StrumTrack } from '@/utils/strum-track';
+import { getStepsPerBeat } from '@/utils/strum-synth';
 
 const IS_WEB = Platform.OS === 'web';
 /** Native: wait this long after the last tempo tap before re-rendering the track. */
@@ -12,7 +13,14 @@ const TEMPO_DEBOUNCE_MS = 300;
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
-const BEAT_LABELS = ['1', '&', '2', '&', '3', '&', '4', '&'];
+/** Counting syllables after the beat number, by steps per beat. */
+const SUBDIVISION_LABELS: Record<number, string[]> = {
+  2: ['&'],
+  3: ['&', 'a'],
+  4: ['e', '&', 'a'],
+};
+/** Above this many steps the grid wraps onto two rows so the boxes stay tappable. */
+const MAX_STEPS_PER_ROW = 8;
 const MIN_TEMPO = 40;
 const MAX_TEMPO = 220;
 /** How far ahead (ms) the web scheduler runs; must stay well below SCHEDULE_AHEAD. */
@@ -26,6 +34,8 @@ type StrummingCardProps = {
   pattern: ('D' | 'U' | '-')[];
   timeSignature: string;
   tempo: number;
+  /** Steps per beat (2, 3 or 4); guessed from the pattern length when missing. */
+  subdivision?: number;
   note?: string;
 };
 
@@ -35,7 +45,27 @@ function strumIcon(symbol: 'D' | 'U' | '-'): IoniconName {
   return 'remove';
 }
 
-export function StrummingCard({ pattern, timeSignature, tempo, note }: StrummingCardProps) {
+/** "1", "e", "&", "a", "2", … for the step at `index`. */
+function stepLabel(index: number, stepsPerBeat: number): string {
+  const position = index % stepsPerBeat;
+  if (position === 0) return String(Math.floor(index / stepsPerBeat) + 1);
+  return SUBDIVISION_LABELS[stepsPerBeat]?.[position - 1] ?? '';
+}
+
+/** Header text: rests show as gaps; on grids finer than eighths, beats are separated by a dot. */
+function formatPattern(pattern: ('D' | 'U' | '-')[], stepsPerBeat: number): string {
+  const toText = (symbols: ('D' | 'U' | '-')[]) =>
+    symbols.map((symbol) => (symbol === '-' ? ' ' : symbol)).join('');
+  if (stepsPerBeat <= 2) return toText(pattern).trimEnd();
+
+  const beats: string[] = [];
+  for (let start = 0; start < pattern.length; start += stepsPerBeat) {
+    beats.push(toText(pattern.slice(start, start + stepsPerBeat)).trim() || '–');
+  }
+  return beats.join(' · ');
+}
+
+export function StrummingCard({ pattern, timeSignature, tempo, subdivision, note }: StrummingCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [bpm, setBpm] = useState(tempo);
@@ -67,6 +97,7 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
   const tempoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const beatsPerBar = parseInt(timeSignature, 10) || 4;
+  const stepsPerBeat = subdivision ?? getStepsPerBeat(pattern.length, beatsPerBar);
 
   const releasePlayer = useCallback(() => {
     const player = playerRef.current;
@@ -105,7 +136,7 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
 
       let track: StrumTrack;
       try {
-        track = await buildStrumTrack({ pattern, bpm: bpmNow, beatsPerBar, countIn: withCountIn });
+        track = await buildStrumTrack({ pattern, bpm: bpmNow, beatsPerBar, countIn: withCountIn, stepsPerBeat });
       } catch {
         if (session === sessionRef.current) stop();
         return;
@@ -129,7 +160,7 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
       trackRef.current = track;
       player.play();
     },
-    [pattern, beatsPerBar, releasePlayer, stop],
+    [pattern, beatsPerBar, stepsPerBeat, releasePlayer, stop],
   );
 
   const start = useCallback(() => {
@@ -190,7 +221,7 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
             }
             queueRef.current.push({ time, step: index, count: null });
             stepIndexRef.current = (index + 1) % pattern.length;
-            nextTimeRef.current = time + quarter / 2;
+            nextTimeRef.current = time + quarter / stepsPerBeat;
           }
         }
       }, LOOKAHEAD_MS);
@@ -210,7 +241,7 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
 
     // Web without Web Audio support: nothing can play.
     stop();
-  }, [pattern, beatsPerBar, playTrack, stop]);
+  }, [pattern, beatsPerBar, stepsPerBeat, playTrack, stop]);
 
   // Native: mute applies to the playing clip straight away.
   useEffect(() => {
@@ -234,7 +265,21 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
   useEffect(() => stop, [stop]);
 
   // Rests show as a gap here; the dash appears only in the arrow row below.
-  const patternLabel = pattern.map((symbol) => (symbol === '-' ? ' ' : symbol)).join('').trimEnd();
+  const patternLabel = formatPattern(pattern, stepsPerBeat);
+
+  // Steps grouped by beat, and beats split into rows when the grid is dense.
+  const beatGroups: number[][] = [];
+  for (let start = 0; start < pattern.length; start += stepsPerBeat) {
+    beatGroups.push(pattern.slice(start, start + stepsPerBeat).map((_, offset) => start + offset));
+  }
+  const beatsPerRow =
+    pattern.length > MAX_STEPS_PER_ROW
+      ? Math.max(1, Math.floor(MAX_STEPS_PER_ROW / stepsPerBeat))
+      : beatGroups.length;
+  const rows: number[][][] = [];
+  for (let start = 0; start < beatGroups.length; start += beatsPerRow) {
+    rows.push(beatGroups.slice(start, start + beatsPerRow));
+  }
 
   return (
     <View style={styles.container}>
@@ -272,20 +317,33 @@ export function StrummingCard({ pattern, timeSignature, tempo, note }: Strumming
         </View>
       </View>
 
-      <View style={styles.beatRow}>
-        {pattern.map((symbol, index) => {
-          const isActive = isPlaying && index === activeIndex;
-          return (
-            <View key={`${symbol}-${index}`} style={styles.beat}>
-              <View style={[styles.beatButton, isActive && styles.beatButtonActive]}>
-                <Ionicons name={strumIcon(symbol)} size={16} color={isActive ? colors.background : colors.text} />
+      <View style={styles.beatGrid}>
+        {rows.map((row, rowIndex) => (
+          <View key={rowIndex} style={styles.beatRow}>
+            {row.map((stepIndexes) => (
+              <View key={stepIndexes[0]} style={styles.beatGroup}>
+                {stepIndexes.map((index) => {
+                  const symbol = pattern[index];
+                  const isActive = isPlaying && index === activeIndex;
+                  return (
+                    <View key={`${symbol}-${index}`} style={styles.beat}>
+                      <View style={[styles.beatButton, isActive && styles.beatButtonActive]}>
+                        <Ionicons
+                          name={strumIcon(symbol)}
+                          size={16}
+                          color={isActive ? colors.background : colors.text}
+                        />
+                      </View>
+                      <Text style={[styles.beatLabel, isActive && styles.beatLabelActive]}>
+                        {stepLabel(index, stepsPerBeat)}
+                      </Text>
+                    </View>
+                  );
+                })}
               </View>
-              <Text style={[styles.beatLabel, isActive && styles.beatLabelActive]}>
-                {BEAT_LABELS[index] ?? ''}
-              </Text>
-            </View>
-          );
-        })}
+            ))}
+          </View>
+        ))}
       </View>
 
       <View style={styles.tempoRow}>
@@ -330,6 +388,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   headerText: {
+    flexShrink: 1,
     gap: 4,
   },
   label: {
@@ -390,9 +449,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.background,
   },
+  beatGrid: {
+    gap: spacing.md,
+  },
   beatRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 10,
+  },
+  // One beat's worth of steps; the wider gap between groups shows where each beat starts.
+  beatGroup: {
+    flex: 1,
+    flexDirection: 'row',
     gap: 4,
   },
   beat: {
